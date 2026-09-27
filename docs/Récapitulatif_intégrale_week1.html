@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Documentation Technique — NetFortress (Jalon Semaine 1-2)</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: #0f172a;
+      line-height: 1.5;
+      font-size: 13px;
+      margin: 0;
+      padding: 0;
+    }
+    h1 {
+      font-size: 20px;
+      color: #0f172a;
+      border-bottom: 2px solid #2563eb;
+      padding-bottom: 6px;
+      margin-top: 0;
+    }
+    h2 {
+      font-size: 15px;
+      color: #1e3a8a;
+      border-bottom: 1px solid #cbd5e1;
+      padding-bottom: 4px;
+      margin-top: 22px;
+      page-break-after: avoid;
+    }
+    h3 {
+      font-size: 13px;
+      color: #334155;
+      margin-top: 14px;
+      margin-bottom: 4px;
+      page-break-after: avoid;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 12px;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 6px 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #f1f5f9;
+      color: #1e293b;
+      font-weight: 600;
+    }
+    pre {
+      background-color: #0f172a;
+      color: #f8fafc;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.4;
+      margin: 6px 0;
+      page-break-inside: avoid;
+      white-space: pre-wrap;
+    }
+    .result-box {
+      background-color: #f8fafc;
+      border-left: 3px solid #2563eb;
+      padding: 6px 10px;
+      margin: 4px 0 10px 0;
+      font-size: 12px;
+    }
+    ul, ol {
+      margin: 4px 0 8px 0;
+      padding-left: 20px;
+    }
+    li {
+      margin-bottom: 3px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Documentation Technique & Reconstitution — Projet NetFortress</h1>
+  <p><strong>Jalon :</strong> Semaine 1-2 | <strong>Objet :</strong> Déploiement L2/L3, Segmentation VLAN 802.1Q et Politiques de Filtrage Pare-feu</p>
+
+  <h2>1. Ressources Téléchargées, Justification & Sources</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Logiciel / Image</th>
+        <th>Source</th>
+        <th>Rôle au sein du projet</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>UTM Virtual Machines</strong></td>
+        <td><code>mac.getutm.app</code></td>
+        <td>Hyperviseur bare-metal émulant les cartes VirtIO avec accélération native Apple Silicon (ARM64).</td>
+      </tr>
+      <tr>
+        <td><strong>OPNsense (aarch64)</strong></td>
+        <td><code>opnsense.org/download</code></td>
+        <td>Système de pare-feu/routeur sous FreeBSD assurant le trunk 802.1Q, le routage inter-VLAN et le filtrage Packet Filter.</td>
+      </tr>
+      <tr>
+        <td><strong>Alpine Linux (virt aarch64)</strong></td>
+        <td><code>alpinelinux.org/downloads</code></td>
+        <td>Poste client léger (~50 Mo) exécuté en RAM pour injecter les flux de test L3/L4 sans charger l'hôte.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>2. Dimensionnement des Machines Virtuelles dans UTM</h2>
+  <ul>
+    <li><strong>VM OPNsense :</strong> ARM64 | 1 Go RAM | Disque dur virtuel de 2,9 Go.
+      <ul>
+        <li><code>vtnet0</code> (Interface 1) : Réseau partagé (NAT UTM) — émulation du lien WAN relié à Internet.</li>
+        <li><code>vtnet1</code> (Interface 2) : Réseau isolé de l'hôte (Host-Only) — support physique du Trunk 802.1Q.</li>
+      </ul>
+    </li>
+    <li><strong>VM Alpine Linux :</strong> ARM64 | 512 Mo RAM | Live RAM (sans stockage persistant).
+      <ul>
+        <li><code>eth0</code> (Interface 1) : Rattachée au réseau isolé de l'hôte d'UTM pour s'interconnecter à <code>vtnet1</code>.</li>
+      </ul>
+    </li>
+  </ul>
+
+  <h2>3. Plan d'Adressage & Segmentation Logique</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Zone</th>
+        <th>VLAN ID</th>
+        <th>Interface parente</th>
+        <th>Sous-réseau</th>
+        <th>Passerelle OPNsense</th>
+        <th>IP Client Alpine</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>LAN / Utilisateurs</strong></td>
+        <td>VLAN 10</td>
+        <td><code>vtnet1</code> / <code>eth0</code></td>
+        <td><code>10.10.10.0/24</code></td>
+        <td><code>10.10.10.1</code></td>
+        <td><code>10.10.10.50</code></td>
+      </tr>
+      <tr>
+        <td><strong>Base de données (Isolée)</strong></td>
+        <td>VLAN 30</td>
+        <td><code>vtnet1</code></td>
+        <td><code>10.30.30.0/24</code></td>
+        <td><code>10.30.30.1</code></td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>4. Procédure Chronologique & Commandes Exécutées</h2>
+
+  <h3>Phase A : Configuration d'OPNsense (Menu Console & Shell)</h3>
+  <p>Au démarrage d'OPNsense, le terminal présente la console interactive d'administration :</p>
+  
+  <p><strong>1. Assignation des interfaces et création des VLANs (Option 1) :</strong></p>
+  <ul>
+    <li>Saisie de <code>1</code> dans le menu principal (<em>Assign interfaces</em>).</li>
+    <li>Invitation <code>Do you want to configure VLANs now?</code> : saisie de <code>y</code>.</li>
+    <li>Création du VLAN 10 : interface parente <code>vtnet1</code>, tag <code>10</code>. L'interface logique est nommée <code>vtnet1_vlan10</code>.</li>
+    <li>Création du VLAN 30 : interface parente <code>vtnet1</code>, tag <code>30</code>. L'interface logique est nommée <code>vtnet1_vlan30</code>.</li>
+    <li>Affectation des rôles : WAN affecté à <code>vtnet0</code>, LAN affecté à <code>vtnet1_vlan10</code>, OPT1 affecté à <code>vtnet1_vlan30</code>.</li>
+  </ul>
+
+  <p><strong>2. Définition des adresses IP (Option 2) :</strong></p>
+  <ul>
+    <li>Saisie de <code>2</code> dans le menu principal (<em>Set interface IP address</em>).</li>
+    <li>Sélection de l'interface WAN (<code>vtnet0</code>) : activation du client IPv4 via DHCP (<code>y</code>).</li>
+    <li>Sélection de l'interface LAN (<code>vtnet1_vlan10</code>) : DHCP désactivé (<code>n</code>), adresse IPv4 positionnée à <code>10.10.10.1</code>, masque CIDR fixé à <code>24</code>, pas de passerelle amont (Entrée).</li>
+    <li>Sélection de l'interface OPT1 (<code>vtnet1_vlan30</code>) : configuration de l'IP <code>10.30.30.1</code> avec un masque de <code>24</code>.</li>
+  </ul>
+
+  <p><strong>3. Équivalent en commandes pures (Option 8 - Shell) :</strong></p>
+  <pre># Configuration automatique du WAN
+dhclient vtnet0
+
+# Création et adressage des passerelles VLAN sur vtnet1
+ifconfig vtnet1_vlan10 create vlandev vtnet1 vlan 10
+ifconfig vtnet1_vlan10 inet 10.10.10.1/24 up
+
+ifconfig vtnet1_vlan30 create vlandev vtnet1 vlan 30
+ifconfig vtnet1_vlan30 inet 10.30.30.1/24 up</pre>
+
+  <h3>Phase B : Configuration Réseau d'Alpine Linux (Sonde de test)</h3>
+  <p>Connexion en <code>root</code> sur le système client :</p>
+  <pre># Création et montage de la patte balisée 802.1Q
+ip link add link eth0 name eth0.10 type vlan id 10
+ip link set dev eth0.10 up
+
+# Adressage IP et déclaration de la passerelle par défaut
+ip addr add 10.10.10.50/24 dev eth0.10
+ip route add default via 10.10.10.1 dev eth0.10
+
+# Inscription dans la configuration réseau locale
+cat &lt;&lt; 'EOF' &gt; /etc/network/interfaces
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet manual
+
+auto eth0.10
+iface eth0.10 inet static
+    address 10.10.10.50
+    netmask 255.255.255.0
+    gateway 10.10.10.1
+EOF</pre>
+
+  <h3>Phase C : Application des Politiques de Sécurité & Persistance (OPNsense)</h3>
+  <p>Dans l'option 8 (<em>Shell</em>) d'OPNsense, écriture du script d'amorce dans le répertoire des hooks système pour pérenniser les règles après reboot :</p>
+  <pre>echo 'echo "block in log quick on vtnet1_vlan10 to 10.30.30.1/24" &gt;&gt; /tmp/rules.debug' &gt; /usr/local/etc/rc.syshook.d/start/99-netfortress.sh
+echo 'echo "pass in quick on vtnet1_vlan10" &gt;&gt; /tmp/rules.debug' &gt;&gt; /usr/local/etc/rc.syshook.d/start/99-netfortress.sh
+echo 'pfctl -f /tmp/rules.debug' &gt;&gt; /usr/local/etc/rc.syshook.d/start/99-netfortress.sh
+chmod +x /usr/local/etc/rc.syshook.d/start/99-netfortress.sh
+
+# Application immédiate dans le noyau Packet Filter
+pfctl -f /tmp/rules.debug</pre>
+
+  <p>Contrôle de l'intégrité du fichier généré :</p>
+  <pre>cat /usr/local/etc/rc.syshook.d/start/99-netfortress.sh</pre>
+  <div class="result-box">
+    <strong>Résultat obtenu :</strong><br>
+    <code>echo "block in log quick on vtnet1_vlan10 to 10.30.30.1/24" &gt;&gt; /tmp/rules.debug</code><br>
+    <code>echo "pass in quick on vtnet1_vlan10" &gt;&gt; /tmp/rules.debug</code><br>
+    <code>pfctl -f /tmp/rules.debug</code>
+  </div>
+
+  <h2>5. Campagne de Validation & Résultats Constateurs</h2>
+
+  <h3>1. Test d'accès nominal au segment local (Alpine Linux)</h3>
+  <pre>ping -c 3 10.10.10.1</pre>
+  <div class="result-box">
+    <strong>Résultat :</strong> 3 packets transmitted, 3 packets received, <strong>0% packet loss</strong>.<br>
+    <em>Conclusion :</em> La liaison L2 802.1Q et la communication L3 avec la passerelle locale sont opérationnelles.
+  </div>
+
+  <h3>2. Test de rupture de transit inter-VLAN (Alpine Linux)</h3>
+  <pre>ping -c 3 10.30.30.1</pre>
+  <div class="result-box">
+    <strong>Résultat :</strong> 3 packets transmitted, 0 packets received, <strong>100% packet loss</strong>.<br>
+    <em>Conclusion :</em> L'isolement strict de la zone Base de données est effectif au niveau IP.
+  </div>
+
+  <h3>3. Test d'interdiction de connexion L4 MySQL (Alpine Linux)</h3>
+  <pre>nc -z -v -w 2 10.30.30.1 3306</pre>
+  <div class="result-box">
+    <strong>Résultat :</strong> <code>nc: 10.30.30.1 (10.30.30.1:3306): Operation timed out</code>.<br>
+    <em>Conclusion :</em> Le port TCP/3306 ne répond pas, attestant d'un rejet silencieux conforme à la politique de sécurité.
+  </div>
+
+  <h3>4. Preuve de rejet actif dans les journaux du pare-feu (OPNsense)</h3>
+  <pre>tcpdump -nettti pflog0 "dst 10.30.30.1"</pre>
+  <div class="result-box">
+    <strong>Résultat capturé :</strong><br>
+    <code>00:00:00.000000 rule 96/0(match): block in on vtnet1_vlan10: 10.10.10.50 &gt; 10.30.30.1: ICMP echo request</code><br>
+    <code>00:00:01.004057 rule 96/0(match): block in on vtnet1_vlan10: 10.10.10.50 &gt; 10.30.30.1: ICMP echo request</code><br>
+    <em>Conclusion :</em> La destruction des paquets provient de la règle de sécurité 96 appliquée par le pare-feu.
+  </div>
+
+  <h2>6. Difficultés Rencontrées & Résolutions Techniques</h2>
+  <ul>
+    <li><strong>Routage manquant sur Alpine :</strong> Message <code>ping: sendto: Network unreachable</code> lors du test vers <code>10.30.30.1</code>. Résolu par l'adjonction de la route <code>ip route add default via 10.10.10.1 dev eth0.10</code>.</li>
+    <li><strong>Syntaxe Netcat BusyBox :</strong> Blocage de la commande sans argument de délai. Résolu par la syntaxe explicite <code>nc -z -v -w 2 &lt;IP&gt; &lt;Port&gt;</code>.</li>
+    <li><strong>Comportement du shell csh d'OPNsense :</strong> Erreurs <code>Event not found</code> (sur le caractère <code>!</code>) et <code>-e: not found</code> (sur <code>echo -e</code>). Résolu par des écritures séquentielles via <code>echo '...' &gt;&gt;</code> délimitées par des apostrophes.</li>
+  </ul>
+
+</body>
+</html>

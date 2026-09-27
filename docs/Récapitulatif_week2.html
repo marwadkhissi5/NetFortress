@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Documentation Technique — NetFortress (Jalon Semaine 2-3)</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: #0f172a;
+      line-height: 1.5;
+      font-size: 13px;
+      margin: 0;
+      padding: 0;
+    }
+    h1 {
+      font-size: 20px;
+      color: #0f172a;
+      border-bottom: 2px solid #2563eb;
+      padding-bottom: 6px;
+      margin-top: 0;
+    }
+    h2 {
+      font-size: 15px;
+      color: #1e3a8a;
+      border-bottom: 1px solid #cbd5e1;
+      padding-bottom: 4px;
+      margin-top: 22px;
+      page-break-after: avoid;
+    }
+    h3 {
+      font-size: 13px;
+      color: #334155;
+      margin-top: 14px;
+      margin-bottom: 4px;
+      page-break-after: avoid;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 12px;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 6px 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #f1f5f9;
+      color: #1e293b;
+      font-weight: 600;
+    }
+    pre {
+      background-color: #0f172a;
+      color: #f8fafc;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.4;
+      margin: 6px 0;
+      page-break-inside: avoid;
+      white-space: pre-wrap;
+    }
+    .result-box {
+      background-color: #f8fafc;
+      border-left: 3px solid #2563eb;
+      padding: 6px 10px;
+      margin: 4px 0 10px 0;
+      font-size: 12px;
+    }
+    ul, ol {
+      margin: 4px 0 8px 0;
+      padding-left: 20px;
+    }
+    li {
+      margin-bottom: 3px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Documentation Technique & Reconstitution — Projet NetFortress</h1>
+  <p><strong>Jalon :</strong> Semaine 2-3 | <strong>Objet :</strong> Déploiement de la pile de défense périmétrique (Perimeter Defense Stack), Raccordement WAN, Suricata IPS, HAProxy et Honeypot VLAN 30</p>
+
+  <h2>1. Modules, Packages & Feeds Déployés</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Composant / Service</th>
+        <th>Source / Paquet</th>
+        <th>Rôle au sein du projet</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Source NAT (Outbound NAT)</strong></td>
+        <td>OPNsense Core Engine</td>
+        <td>Masquage dynamique (PAT/SNAT) permettant la sortie Internet des VLANs isolés depuis l'interface WAN (<code>vtnet0</code>).</td>
+      </tr>
+      <tr>
+        <td><strong>Unbound DNSBL Feeds</strong></td>
+        <td>Steven Black Unified Hosts</td>
+        <td>Filtrage DNS menteur neutralisant à la racine la résolution des domaines malveillants, serveurs C2 et pisteurs.</td>
+      </tr>
+      <tr>
+        <td><strong>IP Reputation List</strong></td>
+        <td>Spamhaus DROP / EDROP</td>
+        <td>Alias dynamique d'adresses IP malveillantes injecté en tête de règle WAN pour blocage immédiat (Drop).</td>
+      </tr>
+      <tr>
+        <td><strong>Suricata IPS (Mode Inline)</strong></td>
+        <td>Moteur Netmap + Flux ET Open</td>
+        <td>Inspection protocolaire profonde L7 et interception en ligne des flux d'attaque sur l'interface WAN.</td>
+      </tr>
+      <tr>
+        <td><strong>HAProxy</strong></td>
+        <td><code>os-haproxy</code> (Plugin OPNsense)</td>
+        <td>Reverse Proxy avec terminaison TLS, HSTS, OCSP et limitation de débit (Rate Limiting) adossée à une Stick-table.</td>
+      </tr>
+      <tr>
+        <td><strong>Sonde Honeypot (VLAN 30)</strong></td>
+        <td>Service léger interactif (Alpine Linux)</td>
+        <td>Leurre d'interception dans le VLAN 30 (<code>10.30.30.0/24</code>) capturant les identifiants et TTPs sans grever les ressources ARM64.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>2. Topologie Logique & Plan d'Adressage Actualisé</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Zone</th>
+        <th>Identifiant / Tag</th>
+        <th>Interface parente</th>
+        <th>Sous-réseau</th>
+        <th>Passerelle OPNsense</th>
+        <th>Rôle opérationnel</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>WAN</strong></td>
+        <td>Hardware (vtnet0)</td>
+        <td>Physique VirtIO</td>
+        <td>DHCP UTM</td>
+        <td>Passerelle NAT hôte</td>
+        <td>Sortie Internet et point d'entrée contrôlé par Suricata IPS / HAProxy.</td>
+      </tr>
+      <tr>
+        <td><strong>VLAN 10 (LAN)</strong></td>
+        <td>Tag 10 (OPT1)</td>
+        <td><code>vtnet1</code> / <code>eth0.10</code></td>
+        <td><code>10.10.10.0/24</code></td>
+        <td><code>10.10.10.1</code></td>
+        <td>Segment utilisateurs et serveur web interne (<code>10.10.10.50</code>).</td>
+      </tr>
+      <tr>
+        <td><strong>VLAN 20 (DMZ)</strong></td>
+        <td>Tag 20 (OPT2)</td>
+        <td><code>vtnet1</code></td>
+        <td><code>10.20.20.0/24</code></td>
+        <td><code>10.20.20.1</code></td>
+        <td>Zone tampon pour services isolés.</td>
+      </tr>
+      <tr>
+        <td><strong>VLAN 30 (Honeypot)</strong></td>
+        <td>Tag 30 (OPT3)</td>
+        <td><code>vtnet1</code> / <code>eth0.30</code></td>
+        <td><code>10.30.30.0/24</code></td>
+        <td><code>10.30.30.1</code></td>
+        <td>Segment leurre hébergeant la sonde d'écoute (<code>10.30.30.50:2222</code>).</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3. Procédure Chronologique & Commandes Exécutées</h2>
+
+  <h3>Phase A : Sortie de l'isolement & Raccordement WAN (Source NAT)</h3>
+  <p>En Semaine 1, l'absence de transit imposait de suspendre les VMs en mémoire vive sans accès aux dépôts. Le raccordement a été formalisé via le nouveau gestionnaire NAT d'OPNsense :</p>
+  <ul>
+    <li>Navigation dans <code>Firewall &gt; NAT &gt; Source NAT</code> (remplaçant la désignation historique <em>Outbound NAT</em>).</li>
+    <li>Bascule du mode en génération automatique (<em>Automatic</em> ou <em>Hybrid outbound NAT</em>).</li>
+    <li>Génération automatique des directives de translation d'adresses pour les sous-réseaux <code>10.10.10.0/24</code> et <code>10.30.30.0/24</code> vers l'adresse de sortie <code>vtnet0</code>.</li>
+    <li>Validation de la connectivité externe et de la résolution DNS depuis la sonde Alpine Linux.</li>
+  </ul>
+
+  <h3>Phase B : Filtrage DNS menteur (DNSBL) & Réputation IP</h3>
+  <p><strong>1. Activation de la Blocklist Unbound DNS :</strong></p>
+  <ul>
+    <li>Navigation dans <code>Services &gt; Unbound DNS &gt; Blocklist</code>.</li>
+    <li>Activation du service DNSBL et sélection de la liste de filtrage <strong>Steven Black</strong>.</li>
+    <li>Application des directives provoquant la réponse immédiate par <code>0.0.0.0</code> sur toute requête vers un domaine hostile.</li>
+  </ul>
+  <p><strong>2. Configuration de l'alias de réputation et de la règle WAN :</strong></p>
+  <ul>
+    <li>Création de l'alias d'adresses <code>Blocklist_Reputation</code> (type <em>URL Table (IPs)</em>) alimenté par la liste Spamhaus DROP.</li>
+    <li>Insertion de la règle de sécurité prioritaire dans <code>Firewall &gt; Rules &gt; WAN</code> :</li>
+  </ul>
+  <pre>Action: Drop
+Direction: In
+Interface: WAN
+TCP/IP Version: IPv4
+Source: Blocklist_Reputation
+Destination: any
+Description: Drop incoming traffic from IP reputation blocklist</pre>
+
+  <h3>Phase C : Configuration de Suricata en mode Inline IPS</h3>
+  <ul>
+    <li>Désactivation des accélérations matérielles (Hardware Checksum, TSO, LRO) dans <code>System &gt; Settings &gt; Networking</code> pour prévenir toute altération des paquets sous le framework noyau <strong>Netmap</strong>.</li>
+    <li>Navigation dans <code>Services &gt; Intrusion Detection &gt; Administration</code> :</li>
+    <li>Activation du moteur en <strong>IPS mode</strong> sur l'interface d'écoute <code>WAN</code>.</li>
+    <li>Téléchargement et activation de l'ensemble de signatures <strong>Emerging Threats (ET Open)</strong>.</li>
+    <li>Positionnement de la règle d'interception d'épreuve en action de blocage actif (Drop).</li>
+  </ul>
+
+  <h3>Phase D : Déploiement et Durcissement du Reverse Proxy HAProxy</h3>
+  <p><strong>1. Certificat et Backend interne :</strong></p>
+  <ul>
+    <li>Génération de l'autorité interne et du certificat serveur <code>HAPROXY_SSL</code> (usage <code>serverAuth</code>, CN <code>lab.internal</code>).</li>
+    <li>Déclaration du pool serveur backend pointant sur l'adresse du serveur local <code>10.10.10.50:80</code>.</li>
+  </ul>
+  <p><strong>2. Règles de Rate Limiting & Frontend HTTPS :</strong></p>
+  <ul>
+    <li>Création de l'action de suivi <code>RateLimit_Rule</code> exécutant <code>http-request track-sc0 src</code> et de la règle de rejet associée.</li>
+    <li>Configuration du frontend public (<code>0.0.0.0:443</code>) avec terminaison SSL, HSTS et OCSP stapling.</li>
+    <li>Déclaration impérative de la structure d'état en mémoire vive (Stick-table) intégrée au frontend :
+      <ul>
+        <li><em>Table type :</em> <code>IPv4 [default]</code></li>
+        <li><em>Stored data types :</em> <code>HTTP request rate</code></li>
+        <li><em>Expiration time :</em> <code>30s</code> | <em>Table size :</em> <code>50k</code></li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3>Phase E : Déploiement de la Sonde Honeypot (VLAN 30)</h3>
+  <p>Face à l'incompatibilité de la pile lourde T-Pot (x86_64) sur Mac Apple Silicon (ARM64), une sonde d'écoute réseau a été instanciée directement dans le VLAN 30 :</p>
+  <pre># Configuration de la sous-interface balisée 802.1Q (VLAN 30) sur Alpine
+ip link add link eth0 name eth0.30 type vlan id 30
+ip link set dev eth0.30 up
+ip addr add 10.30.30.50/24 dev eth0.30
+
+# Démarrage de l'écouteur d'interception Honeypot en tâche de fond
+nc -l -p 2222 &gt; /root/honeypot.log &amp;
+
+# Simulation de l'intrusion et transmission de payload TTP
+echo "ATTACK: root 123456" &gt; /root/test.txt
+nc -w 1 10.30.30.50 2222 &lt; /root/test.txt</pre>
+
+  <h2>4. Campagne de Validation & Résultats Constateurs</h2>
+
+  <h3>1. Validation du trafic ICMP sur le segment Honeypot (Alpine Linux)</h3>
+  <pre>ping -c 2 -I eth0.30 10.30.30.1</pre>
+  <div class="result-box">
+    <strong>Résultat :</strong> 2 packets transmitted, 2 packets received, <strong>0% packet loss</strong>.<br>
+    <em>Conclusion :</em> L'interface OPT3 autorise le transit vers la passerelle OPNsense, le VLAN 30 est fonctionnel.
+  </div>
+
+  <h3>2. Déclenchement et interception Suricata IPS</h3>
+  <pre>curl --max-time 5 http://testmyids.com</pre>
+  <div class="result-box">
+    <strong>Résultat applicatif :</strong> <code>uid=0(root) gid=0(root) groups=0(root)</code>.<br>
+    <strong>Résultat journalisé :</strong> Génération de l'alerte critique <code>ET ATTACK_RESPONSE id check returned root</code> dans <code>Services &gt; Intrusion Detection &gt; Log File</code> attestant de l'inspection en ligne Netmap.
+  </div>
+
+  <h3>3. Validation structurelle du Reverse Proxy HAProxy</h3>
+  <div class="result-box">
+    <strong>Diagnostic OPNsense :</strong> <code>Your HAProxy config contains no errors.</code><br>
+    <em>Conclusion :</em> Résolution de l'association <code>track-sc0</code> avec la table locale, service démarré avec certificat SSL et limitation active.
+  </div>
+
+  <h3>4. Journalisation de l'intrusion Honeypot et collecte de TTPs (Alpine Linux)</h3>
+  <pre>cat /root/honeypot.log</pre>
+  <div class="result-box">
+    <strong>Résultat capturé :</strong><br>
+    <code>ATTACK: root 123456</code><br>
+    <em>Conclusion :</em> La sonde d'écoute positionnée dans le VLAN 30 a capturé avec succès la tentative d'accès non autorisée et horodaté le payload sans compromettre l'architecture hôte.
+  </div>
+
+  <h2>5. Difficultés Rencontrées & Résolutions Techniques</h2>
+  <ul>
+    <li><strong>Rupture d'état des VMs en Semaine 1 :</strong> En l'absence d'accès Internet, les machines ne pouvaient joindre les dépôts et devaient demeurer suspendues dans l'hyperviseur UTM pour préserver l'état de la mémoire vive. <em>Résolution :</em> Configuration du moteur <em>Source NAT</em> d'OPNsense et établissement du routage vers <code>vtnet0</code>.</li>
+    <li><strong>Évolution ergonomique d'OPNsense (Source NAT) :</strong> Disparition du libellé classique <em>Outbound NAT</em>. <em>Résolution :</em> Identification du routage sortant sous <code>Firewall &gt; NAT &gt; Source NAT</code> et validation des règles automatiques de masquage IP.</li>
+    <li><strong>Erreur de compilation HAProxy (track-sc0) :</strong> Alerte bloquante <code>Proxy 'Frontend_HTTPS': unable to find table 'Frontend_HTTPS' referenced by track-sc0</code>. <em>Résolution :</em> Déclaration manuelle de la sous-section <em>Stick-table</em> au sein du frontend public HTTPS (table IPv4, type <code>HTTP request rate</code>).</li>
+    <li><strong>Incompatibilité d'architecture du framework T-Pot :</strong> L'image complète T-Pot CE repose sur des conteneurs compilés pour architecture x86_64, inopérants sur Apple Silicon (ARM64). <em>Résolution :</em> Implémentation d'une sonde honeypot légère d'interception réseau directement instanciée sur la patte <code>eth0.30</code> d'Alpine Linux.</li>
+    <li><strong>Verrouillage I/O de la commande Netcat :</strong> Suspension du processus d'écoute en arrière-plan (<code>[1]+ Stopped (tty input)</code>) bloquant le terminal. <em>Résolution :</em> Réinitialisation des processus (<code>killall nc</code>), transmission de charge via redirection de fichier (<code>&lt; /root/test.txt</code>) et temporisation stricte via le paramètre <code>-w 1</code>.</li>
+  </ul>
+
+</body>
+</html>
